@@ -236,9 +236,9 @@ class BLIP_Decoder(nn.Module):
         tok = self.tokenizer(prompt, return_tensors="pt")
         text = tok["input_ids"].to(image.device)
 
-        bos_id = self.tokenizer.convert_tokens_to_ids("[DEC]")
+        # Use tokenizer's recorded BOS id (keeps any tokenizer-level normalization)
+        bos_id = self.tokenizer.bos_token_id
         text[:, 0] = bos_id
-        text = text[:, :-1]
 
         out = self.text_decoder.generate(
             input_ids=text,
@@ -252,10 +252,12 @@ class BLIP_Decoder(nn.Module):
 
         captions = []
         for seq in out:
-            decoded = self.tokenizer.decode(seq.tolist())
-
-
-            captions.append(decoded[len(self.prompt):])
+            # Remove the prompt tokens (token-level) from the front of each generated sequence
+            # `self.prompt_len` counts prompt tokens (not characters). Using token slicing avoids
+            # cutting in the middle of subword units and keeps beam search alignment correct.
+            gen_seq = seq[self.prompt_len:]
+            caption = self.tokenizer.decode(gen_seq.tolist())
+            captions.append(caption)
 
         return captions
 
