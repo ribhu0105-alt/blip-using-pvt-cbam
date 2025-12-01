@@ -1,0 +1,22 @@
+# Data and datasets
+/data/
+data/
+*.zip
+
+# Checkpoints and logs
+checkpoints/
+logs/
+*.pth
+*.ckpt
+
+# Python cache
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# VS Code / Codespaces
+.vscode/
+.devcontainer/
+
+# Mac / OS files
+.DS_Store
