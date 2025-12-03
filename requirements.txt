@@ -1,5 +1,6 @@
 torch>=2.0.0
 torchvision>=0.15.0
+transformers>=4.57.2
 
 numpy
 Pillow
@@ -9,6 +10,7 @@ matplotlib
 scikit-learn
 
 opencv-python
+gradio
 
 # optional but recommended
 sentencepiece
