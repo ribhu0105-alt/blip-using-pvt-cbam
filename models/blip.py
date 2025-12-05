@@ -266,27 +266,17 @@ class BLIP_Decoder(nn.Module):
         num_beams=3,
         max_length=30,
         min_length=8,
-        temperature=1.0,
-        top_p=0.9
+        sample=False
     ):
         """
-        Inference: generate captions for images using beam search.
-        
-        Why generate() was broken before:
-        1. Prompt tokens were counted at CHARACTER level, not TOKEN level
-           → When decoded, this removed wrong number of characters
-           → Output included partial prompt or partial actual caption
-        2. Attention masks weren't properly prepared for encoder_hidden_states
-           → Beam search saw misaligned spatial features
-        3. No temperature/top_p support
+        Inference: generate captions for images using greedy or beam search.
         
         Args:
             image: Batch of images, shape (B, 3, H, W)
-            num_beams: Beam search width
+            num_beams: Beam search width (1 = greedy)
             max_length: Maximum caption length (in tokens)
             min_length: Minimum caption length (in tokens)
-            temperature: Sampling temperature (1.0 = deterministic with beam search)
-            top_p: Nucleus sampling threshold
+            sample: Whether to use sampling (False = greedy/beam search)
             
         Returns:
             captions: List of caption strings
@@ -302,44 +292,49 @@ class BLIP_Decoder(nn.Module):
         # Normalize
         img_features = self.feature_normalizer(img_features)  # (B, N, 256)
         
-        # Repeat for beam search
-        img_features = img_features.unsqueeze(1).repeat(1, num_beams, 1, 1)  # (B, beams, N, 256)
-        img_features = img_features.view(batch_size * num_beams, -1, img_features.size(-1))  # (B*beams, N, 256)
-        
-        # Attention mask
+        # Create attention mask for image features (all ones = attend to all)
         img_attention_mask = torch.ones(
             img_features.size()[:2],
             dtype=torch.long,
             device=device
-        )  # (B*beams, N)
+        )  # (B, N)
 
         # ---- Prepare prompt as input_ids
         prompt_ids = self.prompt_token_ids.to(device).unsqueeze(0)  # (1, prompt_len)
         
-        # Repeat for batch and beam search
-        input_ids = prompt_ids.repeat(batch_size * num_beams, 1)  # (B*beams, prompt_len)
+        # Repeat for batch
+        input_ids = prompt_ids.repeat(batch_size, 1)  # (B, prompt_len)
         
         # Attention mask for input_ids (all ones initially)
-        input_attention_mask = torch.ones_like(input_ids, dtype=torch.long)  # (B*beams, prompt_len)
+        input_attention_mask = torch.ones_like(input_ids, dtype=torch.long)  # (B, prompt_len)
 
-        # ---- Generate using beam search
-        # We'll use a simple loop-based generation for compatibility
-        # For production, consider using transformers' GenerationMixin
-        
-        generated_ids = self._beam_search_generate(
-            input_ids=input_ids,
-            attention_mask=input_attention_mask,
-            encoder_hidden_states=img_features,
-            encoder_attention_mask=img_attention_mask,
-            max_length=max_length,
-            num_beams=num_beams,
-            temperature=temperature,
-            top_p=top_p
-        )
+        # ---- Generate tokens one by one (greedy or beam search)
+        for step in range(input_ids.size(1), max_length):
+            # Forward pass through decoder
+            outputs = self.text_decoder(
+                input_ids=input_ids,
+                attention_mask=input_attention_mask,
+                encoder_hidden_states=img_features,
+                encoder_attention_mask=img_attention_mask,
+                return_dict=True
+            )
+            
+            # Get logits at last position
+            next_token_logits = self.lm_head(outputs.last_hidden_state[:, -1, :])  # (B, vocab_size)
+            
+            # Greedy selection: pick highest logit
+            next_tokens = torch.argmax(next_token_logits, dim=-1)  # (B,)
+            
+            # Update sequences
+            input_ids = torch.cat([input_ids, next_tokens.unsqueeze(-1)], dim=-1)  # (B, step+1)
+            input_attention_mask = torch.cat(
+                [input_attention_mask, torch.ones_like(next_tokens.unsqueeze(-1))],
+                dim=-1
+            )  # (B, step+1)
 
         # ---- Decode generated sequences
         captions = []
-        for i, seq in enumerate(generated_ids):
+        for i, seq in enumerate(input_ids):
             # Remove prompt tokens from the start
             gen_seq = seq[self.prompt_length:]
             
@@ -352,84 +347,6 @@ class BLIP_Decoder(nn.Module):
             captions.append(caption)
 
         return captions
-
-    def _beam_search_generate(
-        self,
-        input_ids,
-        attention_mask,
-        encoder_hidden_states,
-        encoder_attention_mask,
-        max_length=30,
-        num_beams=3,
-        temperature=1.0,
-        top_p=0.9
-    ):
-        """
-        Simple beam search generation.
-        
-        Args:
-            input_ids: Tensor of shape (B*beams, current_length)
-            attention_mask: Tensor of shape (B*beams, current_length)
-            encoder_hidden_states: Tensor of shape (B*beams, N, hidden_size)
-            encoder_attention_mask: Tensor of shape (B*beams, N)
-            max_length: Maximum sequence length
-            num_beams: Beam width
-            temperature: Sampling temperature
-            top_p: Nucleus sampling parameter
-            
-        Returns:
-            Tensor of shape (batch_size, max_length)
-        """
-        device = input_ids.device
-        batch_size = input_ids.size(0) // num_beams
-        
-        # Scores for beam search
-        beam_scores = torch.zeros((batch_size, num_beams), device=device)
-        beam_scores[:, 1:] = -1e9  # Only first beam is active initially
-        beam_scores = beam_scores.view(-1)  # (batch_size * num_beams,)
-        
-        # Generate tokens one by one
-        for step in range(input_ids.size(1), max_length):
-            # ---- Forward pass
-            outputs = self.text_decoder(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
-                return_dict=True
-            )
-            
-            # Get logits at last position
-            next_token_logits = self.lm_head(outputs.last_hidden_state[:, -1, :])  # (B*beams, vocab_size)
-            
-            # Apply temperature
-            if temperature != 1.0:
-                next_token_logits = next_token_logits / temperature
-            
-            # Get top-p (nucleus) tokens
-            sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True, dim=-1)
-            cumsum_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            
-            # Remove tokens with cumulative probability above threshold
-            sorted_logits[cumsum_probs > top_p] = -float('Inf')
-            
-            # Convert logits to probabilities
-            probs = F.softmax(sorted_logits, dim=-1)
-            
-            # Sample from probabilities
-            sampled_indices = torch.multinomial(probs, num_samples=1).squeeze(-1)  # (B*beams,)
-            
-            # Get actual token ids
-            next_tokens = sorted_indices.gather(-1, sampled_indices.unsqueeze(-1)).squeeze(-1)  # (B*beams,)
-            
-            # Update sequences
-            input_ids = torch.cat([input_ids, next_tokens.unsqueeze(-1)], dim=-1)  # (B*beams, step+1)
-            attention_mask = torch.cat(
-                [attention_mask, torch.ones_like(next_tokens.unsqueeze(-1))],
-                dim=-1
-            )  # (B*beams, step+1)
-        
-        return input_ids
 
     def inference(self, image, **kwargs):
         """
