@@ -44,7 +44,6 @@ def test_inference_greedy_generation():
                 num_beams=1,
                 max_length=20,
                 min_length=5,
-                sample=False
             )
         print(f"    ✓ Inference succeeded!")
         print(f"    Generated caption: '{captions[0]}'")
@@ -73,7 +72,6 @@ def test_batch_inference():
                 num_beams=1,
                 max_length=20,
                 min_length=5,
-                sample=False
             )
         print(f"    ✓ Batch inference succeeded!")
         print(f"    Generated {len(captions)} captions:")
