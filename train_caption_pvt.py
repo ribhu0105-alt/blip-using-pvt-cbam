@@ -1,5 +1,8 @@
 import sys, os
 
+# ---- Disable tokenizer multiprocessing (Fix 5 - prevents deadlock in Colab) ----
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # ---- Add project root automatically ----
 PROJECT_ROOT = os.path.abspath('.')
 sys.path.append(PROJECT_ROOT)
@@ -258,9 +261,9 @@ if __name__ == "__main__":
                         help="Batch size for training")
     parser.add_argument("--image_size", type=int, default=384,
                         help="Input image size (will be resized to HxW)")
-    parser.add_argument("--epochs", type=int, default=10,
+    parser.add_argument("--epochs", type=int, default=1,
                         help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=1e-4,
+    parser.add_argument("--lr", type=float, default=1e-5,
                         help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=0.05,
                         help="Weight decay for AdamW")
