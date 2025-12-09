@@ -158,30 +158,31 @@ def train_projection_distillation(
             # Project PVT features to BLIP space
             projected = proj(pvt_features)  # (B, N_pvt, 768)
             
-            # Since PVT and ViT have different sequence lengths, use mean pooling on longer sequence
-            # PVT: (B, 144, 768), ViT: (B, 577, 768)
-            if projected.shape[1] != blip_features.shape[1]:
-                if projected.shape[1] < blip_features.shape[1]:
-                    # Upsample projected to match blip_features
-                    # Reshape to spatial format, interpolate, reshape back
-                    B, N_pvt, C = projected.shape
-                    N_blip = blip_features.shape[1]
-                    # Use nearest neighbor interpolation
-                    projected = projected.view(B, int(N_pvt ** 0.5), int(N_pvt ** 0.5), C)
-                    projected = projected.permute(0, 3, 1, 2)  # (B, C, H, W)
-                    projected = F.interpolate(projected, size=(24, 24), mode='bilinear', align_corners=False)
-                    projected = projected.permute(0, 2, 3, 1)  # (B, H, W, C)
-                    projected = projected.reshape(B, -1, C)  # (B, N, C)
+            # Since PVT and ViT can have different sequence lengths (ViT may include a CLS token),
+            # handle common cases first, else fall back to mean-pooled MSE to avoid broadcasting errors.
+            Bp, Np, Cp = projected.shape
+            Bt, Nt, Ct = blip_features.shape
+            if Cp != Ct:
+                # Dimension mismatch in channels - fall back to pooled MSE
+                proj_mean = projected.mean(dim=1)
+                blip_mean = blip_features.mean(dim=1)
+                loss = F.mse_loss(proj_mean, blip_mean)
+            else:
+                # If teacher has 1 extra token (likely CLS), drop it
+                if Nt == Np + 1:
+                    blip_trim = blip_features[:, 1:, :]
+                    loss = F.mse_loss(projected, blip_trim)
+                elif Np == Nt + 1:
+                    # Rare: projected longer by one token, drop first projected token
+                    proj_trim = projected[:, 1:, :]
+                    loss = F.mse_loss(proj_trim, blip_features)
+                elif Np == Nt:
+                    loss = F.mse_loss(projected, blip_features)
                 else:
-                    # Downsample blip_features to match projected
-                    B, N_blip, C = blip_features.shape
-                    # Use adaptive average pooling
-                    blip_features = blip_features.view(B, int(N_blip ** 0.5 + 0.5), int(N_blip ** 0.5 + 0.5), C)[:, :, :, :]  # May not be square
-                    # Just take first N_pvt tokens
-                    blip_features = blip_features[:, :projected.shape[1], :]
-            
-            # MSE loss between projected features and teacher features
-            loss = F.mse_loss(projected, blip_features)
+                    # As a safe fallback, match means to avoid shape errors
+                    proj_mean = projected.mean(dim=1)
+                    blip_mean = blip_features.mean(dim=1)
+                    loss = F.mse_loss(proj_mean, blip_mean)
             
             optimizer.zero_grad()
             loss.backward()

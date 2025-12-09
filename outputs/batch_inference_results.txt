@@ -1,0 +1,15 @@
+URL: https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg
+Caption: a in sunset is the of in in in for in in on in in at in in, in in purple in in and in in lavender in in work in in
+
+URL: https://raw.githubusercontent.com/fastai/fastbook/master/images/cat.jpg
+Error: HTTP Error 404: Not Found
+
+URL: https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg
+Error: HTTP Error 403: Forbidden
+
+URL: https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif
+Error: HTTP Error 403: Forbidden
+
+URL: https://raw.githubusercontent.com/zhanghang1989/ResNeXt/master/images/ILSVRC2012_val_00000023.JPEG
+Error: HTTP Error 404: Not Found
+
