@@ -72,14 +72,18 @@ def load_combined_model(checkpoint_path, device='cpu', blip_model_name='Salesfor
     if len(proj_keys) > 0:
         print("Loading projection layer...")
         # Infer dimension from weight shape
+        in_dim = None
+        out_dim = None
         for k, v in proj_keys.items():
-            if k.endswith('.weight'):
+            if k == 'weight':  # Not 'weight' with suffix, just 'weight'
                 out_dim, in_dim = v.shape
-                proj_layer = nn.Linear(in_dim, out_dim).to(device)
                 break
-        if proj_layer is not None:
+        if in_dim is not None and out_dim is not None:
+            proj_layer = nn.Linear(in_dim, out_dim).to(device)
             res = proj_layer.load_state_dict(proj_keys, strict=False)
             print(f"  Loaded projection layer ({in_dim} -> {out_dim}). Missing: {len(res.missing_keys)}, Unexpected: {len(res.unexpected_keys)}")
+        else:
+            print("  Could not infer projection layer dimensions")
     
     return pvt, blip, proj_layer
 
