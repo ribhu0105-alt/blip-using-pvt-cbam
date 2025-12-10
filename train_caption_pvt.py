@@ -95,6 +95,8 @@ class Flickr8kDataset(Dataset):
 # =========================
 def get_warmup_scheduler(optimizer, warmup_steps):
     def lr_lambda(step):
+        if warmup_steps == 0:
+            return 1.0  # No warmup, use full LR from start
         return min(1.0, step / warmup_steps)  # increase LR linearly
     return LambdaLR(optimizer, lr_lambda)
 
@@ -234,10 +236,36 @@ def train(args):
         avg_epoch_loss = epoch_loss / max(num_batches, 1)
         print(f"\n[Epoch {epoch} Complete] Avg Loss: {avg_epoch_loss:.4f}\n")
 
-    # ---- Final save
+    # ---- Final save (combined checkpoint format for inference)
     final_path = os.path.join(args.output_dir, "final_model.pth")
-    torch.save(model.state_dict(), final_path)
-    print("Training complete. Saved:", final_path)
+    
+    # Convert model.state_dict() to combined checkpoint format
+    # This ensures inference scripts (patch_blip_with_pvt.py, load_combined_checkpoint.py) work
+    combined_state = {}
+    for key, value in model.state_dict().items():
+        if key.startswith('visual_encoder.'):
+            # Already prefixed, keep as-is
+            combined_state[key] = value
+        elif key.startswith('text_decoder.'):
+            # Already prefixed, keep as-is
+            combined_state[key] = value
+        elif key.startswith('proj_layer.'):
+            # Rename proj_layer -> visual_proj
+            new_key = key.replace('proj_layer.', 'visual_proj.')
+            combined_state[new_key] = value
+        elif key == 'feature_normalizer' or key.startswith('feature_normalizer.') or key == 'prompt_token_ids' or key == 'tokenizer':
+            # Skip non-trainable components (feature normalizer, tokenizer, prompt)
+            continue
+        else:
+            # For any other keys, assume they belong to text_decoder if not explicitly prefixed
+            combined_state[f'text_decoder.{key}'] = value
+    
+    torch.save(combined_state, final_path)
+    print(f"Training complete. Saved combined checkpoint: {final_path}")
+    print(f"  Total keys: {len(combined_state)}")
+    print(f"  Visual encoder keys: {len([k for k in combined_state if k.startswith('visual_encoder.')])}")
+    print(f"  Text decoder keys: {len([k for k in combined_state if k.startswith('text_decoder.')])}")
+    print(f"  Projection keys: {len([k for k in combined_state if k.startswith('visual_proj.')])}")
 
 
 
