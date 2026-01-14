@@ -1,0 +1,5 @@
+image1.jpg	a red square on white background
+image2.jpg	a blue circle on white background
+image3.jpg	a green triangle on white background
+image4.jpg	a yellow rectangle on white background
+image5.jpg	a purple diamond on white background
